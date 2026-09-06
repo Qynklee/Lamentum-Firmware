@@ -199,6 +199,8 @@ static inline void furi_hal_power_deep_sleep(void) {
     while(LL_HSEM_1StepLock(HSEM, CFG_HW_RCC_SEMID))
         ;
 
+    // bool core2_ready_for_stop = false;
+
     if(!LL_HSEM_1StepLock(HSEM, CFG_HW_ENTRY_STOP_MODE_SEMID)) {
         if(LL_PWR_IsActiveFlag_C2DS() || LL_PWR_IsActiveFlag_C2SB()) {
             // Release ENTRY_STOP_MODE semaphore
@@ -206,16 +208,27 @@ static inline void furi_hal_power_deep_sleep(void) {
 
             // The switch on HSI before entering Stop Mode is required
             furi_hal_clock_switch_hse2hsi();
+            // core2_ready_for_stop = true;
+        } else {
+            // Semaphore is free but Core2 has not confirmed low power yet (race window).
+            // Release the semaphore and fall back to light sleep to avoid disrupting BLE.
+            LL_HSEM_ReleaseLock(HSEM, CFG_HW_ENTRY_STOP_MODE_SEMID, 0);
         }
-    } else {
-        /**
-         * The switch on HSI before entering Stop Mode is required 
-         */
-        furi_hal_clock_switch_hse2hsi();
     }
+    // else: Core2 holds the semaphore, meaning it is actively running the BLE stack.
+    // Per AN5289, CPU1 must NOT enter STOP mode in this case - fall back to light sleep.
 
     /* Release RCC semaphore */
     LL_HSEM_ReleaseLock(HSEM, CFG_HW_RCC_SEMID, 0);
+
+    // if(!core2_ready_for_stop) {
+    //     // Core2 is active or not yet confirmed in low power.
+    //     // Restore PLL clock and use light sleep so the BLE stack is not disrupted.
+    //     furi_check(furi_hal_clock_switch_hse2pll());
+    //     furi_hal_power_resume_aux_periphs();
+    //     furi_hal_power_light_sleep();
+    //     return;
+    // }
 
     // Prepare deep sleep
     LL_LPM_EnableDeepSleep();
